@@ -1,15 +1,19 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ClipboardList,
   Download,
+  Pencil,
   FolderPlus,
   ImagePlus,
   LogOut,
   Plus,
   RefreshCw,
+  Save,
+  Trash2,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -57,12 +61,14 @@ function getSiteProgress(site: AdminSite) {
 }
 
 async function postJson(path: string, body: unknown) {
+  return requestJson(path, "POST", body);
+}
+
+async function requestJson(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) {
   const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -360,7 +366,40 @@ function Field({
 }
 
 function SiteOverview({ site }: { site: AdminSite }) {
+  const router = useRouter();
   const progress = getSiteProgress(site);
+  const [isEditing, setIsEditing] = useState(false);
+  const [name, setName] = useState(site.name);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  async function saveName() {
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await requestJson(`/api/sites/${site.id}`, "PATCH", { name });
+      setIsEditing(false);
+      router.refresh();
+    } catch {
+      setError("Site name could not be updated.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deleteSite() {
+    setError(null);
+
+    try {
+      await requestJson(`/api/sites/${site.id}`, "DELETE");
+      setIsDeleteDialogOpen(false);
+      router.refresh();
+    } catch {
+      setError("Site could not be deleted.");
+    }
+  }
 
   return (
     <Card>
@@ -368,11 +407,56 @@ function SiteOverview({ site }: { site: AdminSite }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-semibold">{site.name}</h3>
+              {isEditing ? (
+                <Input
+                  className="h-9 max-w-xs"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              ) : (
+                <h3 className="text-lg font-semibold">{site.name}</h3>
+              )}
+              {isEditing ? (
+                <>
+                  <Button
+                    size="icon"
+                    title="Save site name"
+                    onClick={saveName}
+                    disabled={isSaving || name.trim().length === 0}
+                  >
+                    <Save aria-hidden="true" className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    title="Cancel edit"
+                    variant="ghost"
+                    onClick={() => {
+                      setName(site.name);
+                      setIsEditing(false);
+                      setError(null);
+                    }}
+                  >
+                    <X aria-hidden="true" className="h-4 w-4" />
+                  </Button>
+                </>
+              ) : (
+                <Button size="icon" title="Edit site name" variant="outline" onClick={() => setIsEditing(true)}>
+                  <Pencil aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              )}
+              <Button
+                size="icon"
+                title="Delete site"
+                variant="destructive"
+                onClick={() => setIsDeleteDialogOpen(true)}
+              >
+                <Trash2 aria-hidden="true" className="h-4 w-4" />
+              </Button>
               <Badge variant={statusVariant(site.status)}>{site.status}</Badge>
             </div>
             <p className="mt-1 text-sm text-slate-600">{site.address}</p>
             <p className="mt-1 text-xs text-slate-500">Updated {formatDate(site.updatedAt)}</p>
+            {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
           </div>
           <div className="min-w-36 text-sm text-slate-700">
             {progress.fulfilled}/{progress.total} required photos
@@ -403,30 +487,284 @@ function SiteOverview({ site }: { site: AdminSite }) {
           )}
         </div>
       </CardContent>
+      <ConfirmDeleteDialog
+        open={isDeleteDialogOpen}
+        title="Delete site"
+        message={`Delete "${site.name}" and all of its categories, picture types, and photos?`}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+        onConfirm={deleteSite}
+      />
     </Card>
   );
 }
 
 function CategoryOverview({ category }: { category: AdminCategory }) {
+  const router = useRouter();
+  const [isEditing, setIsEditing] = useState(false);
+  const [name, setName] = useState(category.name);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  async function saveName() {
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await requestJson(`/api/categories/${category.id}`, "PATCH", { name });
+      setIsEditing(false);
+      router.refresh();
+    } catch {
+      setError("Category name could not be updated.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deleteCategory() {
+    setError(null);
+
+    try {
+      await requestJson(`/api/categories/${category.id}`, "DELETE");
+      setIsDeleteDialogOpen(false);
+      router.refresh();
+    } catch {
+      setError("Category could not be deleted.");
+    }
+  }
+
   return (
     <div className="rounded-md border border-slate-200 px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium">{category.name}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {isEditing ? (
+            <Input
+              className="h-9 max-w-xs"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          ) : (
+            <div className="font-medium">{category.name}</div>
+          )}
+          {isEditing ? (
+            <>
+              <Button
+                size="icon"
+                title="Save category name"
+                onClick={saveName}
+                disabled={isSaving || name.trim().length === 0}
+              >
+                <Save aria-hidden="true" className="h-4 w-4" />
+              </Button>
+              <Button
+                size="icon"
+                title="Cancel edit"
+                variant="ghost"
+                onClick={() => {
+                  setName(category.name);
+                  setIsEditing(false);
+                  setError(null);
+                }}
+              >
+                <X aria-hidden="true" className="h-4 w-4" />
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="icon"
+              title="Edit category name"
+              variant="outline"
+              onClick={() => setIsEditing(true)}
+            >
+              <Pencil aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          )}
+          <Button
+            size="icon"
+            title="Delete category"
+            variant="destructive"
+            onClick={() => setIsDeleteDialogOpen(true)}
+          >
+            <Trash2 aria-hidden="true" className="h-4 w-4" />
+          </Button>
+        </div>
         <Badge variant={statusVariant(category.status)}>{category.status}</Badge>
       </div>
+      {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
       <div className="mt-3 flex flex-wrap gap-2">
         {category.pictureTypes.length === 0 ? (
           <span className="text-sm text-slate-500">No picture types.</span>
         ) : (
           category.pictureTypes.map((pictureType) => (
-            <Badge
-              key={pictureType.id}
-              variant={pictureType.isFulfilled ? "completed" : "default"}
-            >
+            <Badge key={pictureType.id} variant={pictureType.isFulfilled ? "completed" : "default"}>
               {pictureType.name}
             </Badge>
           ))
         )}
+      </div>
+      <PictureTypeManager category={category} />
+      <ConfirmDeleteDialog
+        open={isDeleteDialogOpen}
+        title="Delete category"
+        message={`Delete "${category.name}" and all of its picture types and photos?`}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+        onConfirm={deleteCategory}
+      />
+    </div>
+  );
+}
+
+function PictureTypeManager({
+  category,
+}: {
+  category: AdminCategory;
+}) {
+  const router = useRouter();
+  const [selectedPictureTypeId, setSelectedPictureTypeId] = useState(
+    category.pictureTypes[0]?.id.toString() ?? "",
+  );
+  const selectedPictureType =
+    category.pictureTypes.find((pictureType) => pictureType.id.toString() === selectedPictureTypeId) ??
+    category.pictureTypes[0];
+  const [name, setName] = useState(selectedPictureType?.name ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  useEffect(() => {
+    if (!selectedPictureType) {
+      setSelectedPictureTypeId("");
+      setName("");
+      return;
+    }
+
+    if (selectedPictureType.id.toString() !== selectedPictureTypeId) {
+      setSelectedPictureTypeId(selectedPictureType.id.toString());
+    }
+
+    setName(selectedPictureType.name);
+  }, [selectedPictureType, selectedPictureTypeId]);
+
+  function selectPictureType(id: string) {
+    const pictureType = category.pictureTypes.find((item) => item.id.toString() === id);
+    setSelectedPictureTypeId(id);
+    setName(pictureType?.name ?? "");
+    setError(null);
+  }
+
+  async function saveName() {
+    if (!selectedPictureType) {
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      await requestJson(`/api/picture-types/${selectedPictureType.id}`, "PATCH", { name });
+      router.refresh();
+    } catch {
+      setError("Picture type name could not be updated.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function deletePictureType() {
+    if (!selectedPictureType) {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      await requestJson(`/api/picture-types/${selectedPictureType.id}`, "DELETE");
+      setIsDeleteDialogOpen(false);
+      router.refresh();
+    } catch {
+      setError("Picture type could not be deleted.");
+    }
+  }
+
+  if (category.pictureTypes.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+        <Select
+          aria-label="Select picture type"
+          value={selectedPictureTypeId}
+          onChange={(event) => selectPictureType(event.target.value)}
+        >
+          {category.pictureTypes.map((pictureType) => (
+            <option key={pictureType.id} value={pictureType.id}>
+              {pictureType.name}
+            </option>
+          ))}
+        </Select>
+        <Input
+          aria-label="Picture type name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Button title="Save picture type name" onClick={saveName} disabled={isSaving || name.trim().length === 0}>
+          <Save aria-hidden="true" className="h-4 w-4" />
+          Save
+        </Button>
+        <Button
+          title="Delete picture type"
+          variant="destructive"
+          onClick={() => setIsDeleteDialogOpen(true)}
+        >
+          <Trash2 aria-hidden="true" className="h-4 w-4" />
+          Delete
+        </Button>
+      </div>
+      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      <ConfirmDeleteDialog
+        open={isDeleteDialogOpen}
+        title="Delete picture type"
+        message={`Delete "${selectedPictureType?.name ?? "this picture type"}" and its photos?`}
+        onCancel={() => setIsDeleteDialogOpen(false)}
+        onConfirm={deletePictureType}
+      />
+    </div>
+  );
+}
+
+function ConfirmDeleteDialog({
+  open,
+  title,
+  message,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4">
+      <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-5 shadow-xl">
+        <h2 className="text-base font-semibold text-slate-950">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onConfirm}>
+            <Trash2 aria-hidden="true" className="h-4 w-4" />
+            Delete
+          </Button>
+        </div>
       </div>
     </div>
   );
