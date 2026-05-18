@@ -21,86 +21,140 @@ Key requirements:
 - Camera/Location: `expo-camera`, `expo-location`, `expo-image-manipulator`, `expo-file-system`.
 
 **Backend API & Web Admin Dashboard:**
-- Framework: Full Stack Next.js (App Router).
+- Framework: Full Stack Next.js (App Router) — Route Handlers in `app/api/**/route.ts` serve both the mobile app and the web dashboard. No separate Node/Express server.
 - Language: TypeScript.
 - Database: PostgreSQL (Self-hosted using docker).
-- File Handling/Sizing: `multer` (uploads), `image-size` (for calculating aspect ratios).
+- File Handling/Sizing: Native Next.js `request.formData()` for uploads (no `multer`), Node `fs/promises` to write to disk, `image-size` for calculating aspect ratios.
 - Excel Generation: `exceljs`.
 - UI Components: Tailwind CSS + shadcn/ui.
 
 ---
 
-## 3. DATABASE SCHEMA (Prisma ORM Reference)
+## 3. DATABASE SCHEMA
+
+### 3.A Server Schema (Prisma ORM — PostgreSQL)
 The AI should generate a `schema.prisma` file based on this simplified schema. **(No User Table)**
 
-- **Site**: `id`, `name`, `address`, `status` (INCOMPLETE, COMPLETED).
-- **Category**: `id`, `siteId` (Relation to Site), `name` (e.g., "Indoor Pictures", "Outdoor Pictures"), `status` (INCOMPLETE, COMPLETED).
-- **PictureType**: `id`, `categoryId` (Relation to Category), `name` (e.g., "Tower-1", "Entrance"), `isFulfilled` (Boolean - defaults to false).
+- **Site**: `id`, `name`, `address`, `status` (INCOMPLETE, COMPLETED), `updatedAt`.
+- **Category**: `id`, `siteId` (Relation to Site), `name` (e.g., "Indoor Pictures", "Outdoor Pictures"), `status` (INCOMPLETE, COMPLETED), `updatedAt`.
+- **PictureType**: `id`, `categoryId` (Relation to Category), `name` (e.g., "Tower-1", "Entrance"), `isFulfilled` (Boolean - defaults to false), `updatedAt`.
 - **Photo**: `id`, `pictureTypeId` (Relation to PictureType), `localUri` (mobile only), `serverFilePath` (e.g., `/uploads/site_1/category_2/type_5/img.jpg`), `latitude`, `longitude`, `capturedAt`.
+
+### 3.B Mobile Local Schema (SQLite via `expo-sqlite`)
+The mobile app mirrors server entities locally so it can operate fully offline. Sites/Categories/PictureTypes are read-only on mobile (server is authoritative). Photos are write-locally / push-to-server.
+
+- **sites**: `id`, `name`, `address`, `status`, `last_synced_at`.
+- **categories**: `id`, `site_id`, `name`, `status`, `last_synced_at`.
+- **picture_types**: `id`, `category_id`, `name`, `is_fulfilled`, `last_synced_at`.
+- **photos**: `id` (local), `picture_type_id`, `local_uri`, `latitude`, `longitude`, `captured_at`, `sync_status` ('PENDING' | 'SYNCED'), `server_photo_id` (nullable).
+- **sync_meta**: `key` (e.g., `'sites_last_synced_at'`), `value` (ISO timestamp). Single-row table tracking the last successful site/category refresh.
 
 ---
 
 ## 4. SYSTEM ARCHITECTURE & DATA FLOW
 
 ### A. Local File Storage Flow (Backend)
-Do NOT use cloud storage. Images are stored on the server's disk.
-1. Backend has an `/uploads` directory.
-2. The `POST /api/upload` endpoint uses `multer`.
-3. Multer dynamically creates folders based on ID parameters: `/uploads/site_{siteId}/category_{categoryId}/type_{pictureTypeId}/`.
-4. The file is saved there, and the relative path is saved to the PostgreSQL `Photo` table.
-5. Express serves this folder statically `app.use('/uploads', express.static('uploads'))`.
-6. **Trigger Status Update**: Upon successful photo save, the backend checks if all `PictureType`s for that `Category` have photos. If yes, `Category` -> `COMPLETED`. Then it checks if all `Category`s for that `Site` are completed. If yes, `Site` -> `COMPLETED`.
+Do NOT use cloud storage. Images are stored on the Next.js server's disk.
+1. The Next.js project has an `/uploads` directory at the project root (outside `public/` so files aren't auto-served without access control).
+2. The `POST /api/photos/upload` Route Handler parses the multipart body via the native Web API: `const form = await request.formData()`. The handler is exported as `runtime = 'nodejs'` so Node `fs/promises` is available.
+3. The Route Handler dynamically creates folders based on ID parameters: `/uploads/site_{siteId}/category_{categoryId}/type_{pictureTypeId}/` using `fs/promises.mkdir({ recursive: true })`.
+4. The file is written there with `fs/promises.writeFile`, and the relative path is saved to the PostgreSQL `Photo` table.
+5. Files are served back to clients via a dynamic Route Handler `GET /api/uploads/[...path]/route.ts` that validates the path is inside `/uploads`, streams the file from disk, and sets the correct `Content-Type`. (Do NOT use Express static middleware — it doesn't apply here.)
+6. **Trigger Status Update**: Upon successful photo save, the Route Handler checks if all `PictureType`s for that `Category` have photos. If yes, `Category` -> `COMPLETED`. Then it checks if all `Category`s for that `Site` are completed. If yes, `Site` -> `COMPLETED`.
 
 ### B. Offline-First Mobile Flow
-1. **Fetch**: FT opens the app (no login) and downloads all `INCOMPLETE` Sites, along with nested `Category` and `PictureType` lists.
-2. **Capture**: FT selects a Site -> Category -> `PictureType` and takes a photo via `expo-camera`.
-3. **Watermark**: `expo-image-manipulator` applies GPS, Time, and Site Name text onto the image.
-4. **Local DB Save**: Record added to local SQLite as `sync_status: 'PENDING'`.
-5. **Sync Engine**: `expo-network` listener detects internet. Reads PENDING records -> creates `FormData` -> `POST /api/upload` via Axios.
-6. **Confirmation**: On 200 OK, SQLite updates to `sync_status: 'SYNCED'` and the UI marks the PictureType as fulfilled.
+
+**Workflow assumption**: FTs open the app while still in a good-internet area (office, ground level, before climbing) to refresh local data. Once they go to dead-zone locations (towers, rooftops, basements), the app operates fully from local SQLite. The Boss does **not** update Sites/Categories mid-day; if an exceptional mid-day change happens, the Boss notifies FTs out-of-band to re-open the app and refresh.
+
+1. **Initial Sync (requires internet, one-time per session)**:
+   - On app open, if online, call `GET /api/sites/sync` to fetch all `INCOMPLETE` Sites + nested Categories + PictureTypes.
+   - Upsert into local SQLite tables (`sites`, `categories`, `picture_types`).
+   - Update `sync_meta` with the timestamp.
+   - If offline, skip — use whatever is already cached.
+2. **Site Selection (works offline)**: The "Select Site" screen always reads from local SQLite, never from the network. It works identically online and offline.
+3. **Capture**: FT selects a Site -> Category -> `PictureType` and takes a photo via `expo-camera`.
+4. **Watermark**: `expo-image-manipulator` applies GPS, Time, and Site Name text onto the image.
+5. **Local DB Save**: Photo record added to local SQLite `photos` table as `sync_status: 'PENDING'`. UI immediately marks the PictureType as locally fulfilled (optimistic).
+6. **Sync Engine**: `expo-network` listener detects internet. Reads PENDING records -> creates `FormData` -> `POST /api/photos/upload` via Axios.
+7. **Confirmation**: On 200 OK, SQLite updates `sync_status: 'SYNCED'` and stores the returned `server_photo_id`.
+
+### B.1 Sync Endpoint Contract
+- `GET /api/sites/sync` (requires `x-api-key`) returns:
+  ```
+  {
+    "syncedAt": "2026-05-18T10:00:00Z",
+    "sites": [
+      {
+        "id": 1, "name": "...", "address": "...", "status": "INCOMPLETE", "updatedAt": "...",
+        "categories": [
+          {
+            "id": 10, "name": "...", "status": "INCOMPLETE", "updatedAt": "...",
+            "pictureTypes": [
+              { "id": 100, "name": "Tower-1", "isFulfilled": false, "updatedAt": "..." }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+  ```
+- Mobile performs an **upsert** (insert-or-replace by `id`) into local SQLite. COMPLETED Sites are excluded from the response to keep payload small.
 
 ### C. Category-Based Excel Export Flow
 1. Boss clicks "Export to Excel" on a Site in the Next.js Dashboard.
-2. Node.js backend fetches the `Site` and includes all `Categories`, `PictureTypes`, and `Photos`.
-3. Node.js creates a new `exceljs` Workbook.
+2. The Next.js Route Handler `GET /api/export/excel/site/[siteId]/route.ts` fetches the `Site` and includes all `Categories`, `PictureTypes`, and `Photos`.
+3. The Route Handler creates a new `exceljs` Workbook.
 4. Loop through `Categories`:
    - Create a new Excel Sheet named after the Category (e.g., "Sheet 1: Indoor").
    - Loop through `PictureTypes` in that Category:
      - Write the `PictureType.name` as a text label in the current row.
      - Move to the row directly below.
-     - Use Node.js `fs` to read the image from disk into a buffer.
+     - Use Node `fs/promises` to read the image from disk into a buffer.
      - Use `image-size` library to read original dimensions.
      - Calculate new dimensions: `fixed_width = 400px` (or preferred size), `calculated_height = (original_height / original_width) * fixed_width`.
      - Embed the image into the cell, dynamically setting the Excel row height to match `calculated_height`.
-5. Stream the `.xlsx` file to the frontend for download.
+5. Return the workbook from the Route Handler as a `Response` with the `.xlsx` buffer and `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` so the browser downloads it.
 
 ---
 
 ## 5. AI EXECUTION PLAN (VIBE-CODING PHASES)
 *AI Assistant: Execute these phases sequentially. Do not jump ahead. Wait for user confirmation before moving to the next phase.*
 
-### PHASE 1: Backend Foundation (Express + Prisma + Postgres)
-- Initialize Node/Express/TypeScript project.
-- Setup Prisma and generate the schema based on Section 3.
-- Implement basic security: Mobile routes require a static header `x-api-key`. Dashboard routes require checking a JWT generated by matching `process.env.ADMIN_PASSWORD`.
-- Create CRUD endpoints for the Boss to create Sites, Categories, and Picture Types.
+### PHASE 1: Backend Foundation (Next.js Route Handlers + Prisma + Postgres)
+- Initialize a Next.js 14+ App Router TypeScript project (this same project also hosts the web dashboard — there is NO separate Node/Express server).
+- Setup Prisma and generate the schema based on Section 3.A.
+- Implement basic security via a shared middleware/helper used inside each Route Handler:
+  - Mobile routes (under `app/api/sites/sync`, `app/api/photos/upload`, etc.) require a static `x-api-key` header matching `process.env.MOBILE_API_KEY`.
+  - Dashboard routes require a JWT cookie issued after the Boss submits a password matching `process.env.ADMIN_PASSWORD`.
+- Create CRUD Route Handlers for the Boss to create Sites, Categories, and Picture Types (`app/api/sites/route.ts`, `app/api/categories/route.ts`, `app/api/picture-types/route.ts`).
+- Implement `GET /api/sites/sync` per Section 4.B.1 — returns all `INCOMPLETE` Sites with nested Categories and PictureTypes for mobile sync.
 
 ### PHASE 2: File Upload API & Status Cascade Logic
-- Install/Configure `multer` in Express.
-- Create `POST /api/photos/upload`. 
-- Implement logic to save file to `/uploads/siteId/categoryId/typeId/` and insert `Photo` record.
-- **Crucial**: Write the cascading logic function. When a photo uploads -> mark `PictureType` fulfilled -> check/update `Category` status -> check/update `Site` status.
+- Create the Route Handler `app/api/photos/upload/route.ts` with `export const runtime = 'nodejs'` (required for `fs` access).
+- Parse the multipart body using the native `await request.formData()` — do NOT install or use `multer` (it's Express-only middleware and is incompatible with Next.js Route Handlers).
+- Implement logic to save the file to `/uploads/site_{siteId}/category_{categoryId}/type_{pictureTypeId}/` using `fs/promises` and insert the `Photo` record via Prisma.
+- Add `app/api/uploads/[...path]/route.ts` to stream the saved files back (with path validation to prevent traversal).
+- **Crucial**: Write the cascading logic function. When a photo uploads -> mark `PictureType` fulfilled -> check/update `Category` status -> check/update `Site` status. Run all DB writes inside a single Prisma transaction.
 
 ### PHASE 3: Web Admin Foundation (Next.js)
-- Initialize Next.js App Router with Tailwind and shadcn/ui.
-- Build Master Password Login screen.
+- In the same Next.js project from Phase 1, add Tailwind and shadcn/ui.
+- Build Master Password Login screen (Server Action or Route Handler that sets a JWT cookie when `process.env.ADMIN_PASSWORD` matches).
 - Build the "Site Builder" interface: Forms to create a Site, add Categories, and add Picture Types to those categories.
 - Build the Site Overview dashboard showing progress (`INCOMPLETE` vs `COMPLETED`).
 
-### PHASE 4: Mobile App Foundation (Expo UI)
+### PHASE 4: Mobile App Foundation (Expo UI) + Offline Sync of Site Data
 - Initialize Expo TypeScript app with React Navigation.
-- **No Login Screen**: App opens directly to a "Select Site" screen fetching all `INCOMPLETE` sites.
+- **No Login Screen**: App opens directly to a "Select Site" screen reading from local SQLite (works offline).
+- Build SQLite schema per Section 3.B (`sites`, `categories`, `picture_types`, `photos`, `sync_meta`).
+- Implement initial-sync logic: on app open, if `expo-network` reports online, call `GET /api/sites/sync` and upsert into SQLite. If offline, skip silently and use cached data.
 - Build UI for Site Detail -> Category Detail, clearly showing which Picture Types are missing photos vs completed.
+
+**UX Requirements for Offline Confidence** (on the "Select Site" screen):
+1. **"Last synced" timestamp** displayed prominently at the top — e.g., `Last synced: 2 hours ago` (use relative time). Reads from `sync_meta`.
+2. **Manual "Refresh" button** with explicit loading spinner. FTs use this before heading to dead-zone areas. On success, update timestamp; on failure, show inline error.
+3. **Stale-data warning banner** when last sync is > 24 hours old or `null`: ⚠ "You haven't synced today. Refresh before going offline." (non-blocking, but visible).
+4. **Offline indicator**: When `expo-network` reports no connectivity, show a small badge "Offline — using cached data from [time]". Disable the Refresh button (or show a tap message: "No internet. Connect to refresh.") so FTs aren't confused when nothing updates.
+5. **No silent failures**: Every sync attempt must either visibly succeed (timestamp updates) or visibly fail (toast/banner). Never let a sync silently fail and leave FTs thinking they have fresh data.
 
 ### PHASE 5: Mobile Offline Camera & Local DB
 - Integrate `expo-camera`, `expo-location`, and local SQLite.
@@ -115,12 +169,12 @@ Do NOT use cloud storage. Images are stored on the server's disk.
 - Update local SQLite to `SYNCED` on success and refresh UI.
 
 ### PHASE 7: Advanced Multi-Sheet Excel Export (Backend API)
-- Create `GET /api/export/excel/site/:siteId`.
+- Create the Route Handler `app/api/export/excel/site/[siteId]/route.ts` (with `runtime = 'nodejs'`).
 - Install `exceljs` and `image-size`.
 - Iterate through Categories to create tabs/sheets.
 - Implement the "Label on top, Image exactly below" layout.
 - Implement the aspect-ratio math to ensure images have a strict fixed width but dynamic row height.
-- Return the generated `.xlsx` workbook.
+- Return the generated `.xlsx` workbook as a `Response` with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and a `Content-Disposition: attachment` header.
 
 ---
 
@@ -130,3 +184,4 @@ Do NOT use cloud storage. Images are stored on the server's disk.
 3. **Status Constraint**: DO NOT invent statuses like "In Progress" or "Reviewing". ONLY use `INCOMPLETE` and `COMPLETED`.
 4. **Excel Image Sizing**: You MUST use an image inspection library like `image-size` to read the original width/height of the uploaded `.jpg`/`.png` from disk before injecting it into `exceljs`. Do not rely on ExcelJS's default stretching. The width must be fixed, and height must strictly maintain the aspect ratio.
 5. **No AI Hallucinations**: If you need a specific native library for Expo (e.g., for watermarking) or backend image processing, explicitly ask the human user to run the `npm install` / `npx expo install` command.
+6. **Stack is Next.js + React Native ONLY**: The entire backend (API, file uploads, file serving, Excel export) lives inside the single Next.js App Router project as Route Handlers. The mobile client is React Native (Expo). DO NOT introduce Express, Fastify, Koa, NestJS, a separate Node server, `multer`, `express.static`, or any other framework — even if a tutorial or training-data example shows it. If a library is Express-middleware-only (like `multer`), use the Next.js native equivalent (`request.formData()`, `fs/promises`, streaming `Response`).
