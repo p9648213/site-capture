@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Status {
+  INCOMPLETE
+  COMPLETED
+}
+
+model Site {
+  id         Int        @id @default(autoincrement())
+  name       String
+  address    String
+  status     Status     @default(INCOMPLETE)
+  updatedAt  DateTime   @updatedAt
+  categories Category[]
+
+  @@index([status])
+}
+
+model Category {
+  id           Int           @id @default(autoincrement())
+  siteId       Int
+  name         String
+  status       Status        @default(INCOMPLETE)
+  updatedAt    DateTime      @updatedAt
+  site         Site          @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  pictureTypes PictureType[]
+
+  @@index([siteId])
+  @@index([status])
+}
+
+model PictureType {
+  id          Int      @id @default(autoincrement())
+  categoryId  Int
+  name        String
+  isFulfilled Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  photos      Photo[]
+
+  @@index([categoryId])
+}
+
+model Photo {
+  id             Int         @id @default(autoincrement())
+  pictureTypeId  Int
+  localUri       String?
+  serverFilePath String
+  latitude       Decimal?    @db.Decimal(10, 7)
+  longitude      Decimal?    @db.Decimal(10, 7)
+  capturedAt     DateTime
+  pictureType    PictureType @relation(fields: [pictureTypeId], references: [id], onDelete: Cascade)
+
+  @@index([pictureTypeId])
+}
