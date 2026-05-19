@@ -22,6 +22,8 @@ type PhotoRecord = {
 const MAX_IMAGE_WIDTH = 360;
 const MAX_IMAGE_HEIGHT = 270; // Caps height (e.g., 4:3 ratio based on width limit)
 const excelPointsPerPixel = 0.75;
+const IMAGE_TOP_INDENT = 0.05; // Fractional row offset used in tl anchor
+const BOTTOM_MARGIN_POINTS = 12; // Guaranteed gap under the image (in points)
 
 // Using Partial fixes the TS "diagonal missing" error
 const borderStyle: Partial<ExcelJS.Borders> = {
@@ -90,9 +92,9 @@ async function processAndAddImage(
     extension: getImageExtension(absolutePhotoPath),
   });
 
-  // Small indent (+0.05) to ensure it un-snaps from the exact cell borders for MS Excel stability
+  // Small indent to un-snap from cell borders for MS Excel stability
   worksheet.addImage(imageId, {
-    tl: { col: colIndex + 0.05, row: rowIndex + 0.05 },
+    tl: { col: colIndex + IMAGE_TOP_INDENT, row: rowIndex + IMAGE_TOP_INDENT },
     ext: { width: finalWidth, height: finalHeight },
     editAs: "oneCell",
   });
@@ -291,10 +293,16 @@ export async function GET(_request: Request, { params }: Params) {
         }
       }
 
-      // Size row dynamically to fit tallest calculated bounded image + 15 points padding
+      // Size row so it fits: top indent (IMAGE_TOP_INDENT × row height) + image + bottom margin.
+      // Solving H = IMAGE_TOP_INDENT * H + imagePts + BOTTOM_MARGIN_POINTS
+      //   => H = (imagePts + BOTTOM_MARGIN_POINTS) / (1 - IMAGE_TOP_INDENT)
+      // MS Excel respects the row height exactly, so the bottom margin must survive the
+      // fractional top indent — otherwise the image overflows on Windows (LibreOffice
+      // auto-expands rows and hides this bug).
       const maxRowHeight = Math.max(leftHeight, rightHeight);
+      const imagePts = maxRowHeight * excelPointsPerPixel;
       const imageRow = worksheet.getRow(currentRow);
-      imageRow.height = (maxRowHeight * excelPointsPerPixel) + 15;
+      imageRow.height = (imagePts + BOTTOM_MARGIN_POINTS) / (1 - IMAGE_TOP_INDENT);
 
       currentRow += 2; // Jump 2 rows (leaves an empty spacing row between images)
     }

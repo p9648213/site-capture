@@ -173,7 +173,6 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
 - Install `exceljs` and `image-size`.
 - Iterate through Categories to create tabs/sheets.
 - Implement the "Label on top, Image exactly below" layout.
-- Implement the aspect-ratio math to ensure images have a strict fixed width but dynamic row height.
 - Return the generated `.xlsx` workbook as a `Response` with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` and a `Content-Disposition: attachment` header.
 
 ---
