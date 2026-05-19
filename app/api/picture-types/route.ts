@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { validationError } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
 import { createPictureTypeSchema } from "@/lib/schemas";
+import { markCategoryAndSiteIncomplete } from "@/lib/status-cascade";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireAdmin();
@@ -18,8 +19,21 @@ export async function POST(request: NextRequest) {
     return validationError(parsed.error);
   }
 
-  const pictureType = await prisma.pictureType.create({
-    data: parsed.data,
+  const pictureType = await prisma.$transaction(async (tx) => {
+    const category = await tx.category.findUniqueOrThrow({
+      where: { id: parsed.data.categoryId },
+      select: { siteId: true },
+    });
+    const createdPictureType = await tx.pictureType.create({
+      data: parsed.data,
+    });
+
+    await markCategoryAndSiteIncomplete(tx, {
+      categoryId: parsed.data.categoryId,
+      siteId: category.siteId,
+    });
+
+    return createdPictureType;
   });
 
   return NextResponse.json({ pictureType }, { status: 201 });

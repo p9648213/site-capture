@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { validationError } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
 import { createCategorySchema } from "@/lib/schemas";
+import { markSiteIncomplete } from "@/lib/status-cascade";
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireAdmin();
@@ -18,8 +19,12 @@ export async function POST(request: NextRequest) {
     return validationError(parsed.error);
   }
 
-  const category = await prisma.category.create({
-    data: parsed.data,
+  const category = await prisma.$transaction(async (tx) => {
+    const createdCategory = await tx.category.create({
+      data: parsed.data,
+    });
+    await markSiteIncomplete(tx, parsed.data.siteId);
+    return createdCategory;
   });
 
   return NextResponse.json({ category }, { status: 201 });

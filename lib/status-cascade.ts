@@ -3,6 +3,27 @@ import type { Prisma } from "@prisma/client";
 const incompleteStatus = "INCOMPLETE";
 const completedStatus = "COMPLETED";
 
+export async function markSiteIncomplete(tx: Prisma.TransactionClient, siteId: number) {
+  await tx.site.update({
+    where: { id: siteId },
+    data: { status: incompleteStatus },
+  });
+}
+
+export async function markCategoryAndSiteIncomplete(
+  tx: Prisma.TransactionClient,
+  input: {
+    categoryId: number;
+    siteId: number;
+  },
+) {
+  await tx.category.update({
+    where: { id: input.categoryId },
+    data: { status: incompleteStatus },
+  });
+  await markSiteIncomplete(tx, input.siteId);
+}
+
 export async function cascadeStatusesAfterPhotoUpload(
   tx: Prisma.TransactionClient,
   input: {
