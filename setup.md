@@ -81,7 +81,7 @@ EXPO_PUBLIC_MOBILE_API_KEY="same-value-as-root-MOBILE_API_KEY"
 Start Expo:
 
 ```bash
-npx expo start --clear --localhost --port 8081
+npx expo start
 ```
 
 For physical phones, make sure the phone and computer are on the same network and that `EXPO_PUBLIC_API_BASE_URL` uses the computer LAN IP, not `localhost`.
