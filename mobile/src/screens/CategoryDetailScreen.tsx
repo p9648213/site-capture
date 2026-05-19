@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, type RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { getSiteWithCategories } from "../db/sites";
 import type { RootStackParamList } from "../navigation/types";
+import { usePhotoSyncContext } from "../sync/PhotoSyncContext";
 import type { SiteWithCategories } from "../types/site";
 
 type Route = RouteProp<RootStackParamList, "CategoryDetail">;
@@ -13,14 +14,28 @@ type Navigation = NativeStackNavigationProp<RootStackParamList, "CategoryDetail"
 export function CategoryDetailScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Navigation>();
+  const photoSync = usePhotoSyncContext();
   const [site, setSite] = useState<SiteWithCategories | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const loadSite = useCallback(
+    async (showLoading: boolean) => {
+      if (showLoading) {
+        setIsLoading(true);
+      }
+
+      const cachedSite = await getSiteWithCategories(route.params.siteId);
+      setSite(cachedSite);
+      setIsLoading(false);
+    },
+    [route.params.siteId],
+  );
 
   useFocusEffect(
     useCallback(() => {
       let mounted = true;
 
-      async function loadSite() {
+      async function loadFocusedSite() {
         setIsLoading(true);
         const cachedSite = await getSiteWithCategories(route.params.siteId);
 
@@ -30,13 +45,19 @@ export function CategoryDetailScreen() {
         }
       }
 
-      loadSite();
+      loadFocusedSite();
 
       return () => {
         mounted = false;
       };
     }, [route.params.siteId]),
   );
+
+  useEffect(() => {
+    if (photoSync.syncRevision > 0) {
+      loadSite(false);
+    }
+  }, [loadSite, photoSync.syncRevision]);
 
   const category = useMemo(
     () => site?.categories.find((item) => item.id === route.params.categoryId) ?? null,

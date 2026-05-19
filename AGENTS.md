@@ -23,7 +23,7 @@ Key requirements:
 **Backend API & Web Admin Dashboard:**
 - Framework: Full Stack Next.js (App Router) — Route Handlers in `app/api/**/route.ts` serve both the mobile app and the web dashboard. No separate Node/Express server.
 - Language: TypeScript.
-- Database: PostgreSQL (Self-hosted using docker).
+- Database: SQLite (local file via Prisma, `DATABASE_URL="file:./dev.db"`).
 - File Handling/Sizing: Native Next.js `request.formData()` for uploads (no `multer`), Node `fs/promises` to write to disk, `image-size` for calculating aspect ratios.
 - Excel Generation: `exceljs`.
 - UI Components: Tailwind CSS + shadcn/ui.
@@ -32,7 +32,7 @@ Key requirements:
 
 ## 3. DATABASE SCHEMA
 
-### 3.A Server Schema (Prisma ORM — PostgreSQL)
+### 3.A Server Schema (Prisma ORM — SQLite)
 The AI should generate a `schema.prisma` file based on this simplified schema. **(No User Table)**
 
 - **Site**: `id`, `name`, `address`, `status` (INCOMPLETE, COMPLETED), `updatedAt`.
@@ -58,7 +58,7 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
 1. The Next.js project has an `/uploads` directory at the project root (outside `public/` so files aren't auto-served without access control).
 2. The `POST /api/photos/upload` Route Handler parses the multipart body via the native Web API: `const form = await request.formData()`. The handler is exported as `runtime = 'nodejs'` so Node `fs/promises` is available.
 3. The Route Handler dynamically creates folders based on ID parameters: `/uploads/site_{siteId}/category_{categoryId}/type_{pictureTypeId}/` using `fs/promises.mkdir({ recursive: true })`.
-4. The file is written there with `fs/promises.writeFile`, and the relative path is saved to the PostgreSQL `Photo` table.
+4. The file is written there with `fs/promises.writeFile`, and the relative path is saved to the SQLite-backed Prisma `Photo` table.
 5. Files are served back to clients via a dynamic Route Handler `GET /api/uploads/[...path]/route.ts` that validates the path is inside `/uploads`, streams the file from disk, and sets the correct `Content-Type`. (Do NOT use Express static middleware — it doesn't apply here.)
 6. **Trigger Status Update**: Upon successful photo save, the Route Handler checks if all `PictureType`s for that `Category` have photos. If yes, `Category` -> `COMPLETED`. Then it checks if all `Category`s for that `Site` are completed. If yes, `Site` -> `COMPLETED`.
 
@@ -67,7 +67,7 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
 **Workflow assumption**: FTs open the app while still in a good-internet area (office, ground level, before climbing) to refresh local data. Once they go to dead-zone locations (towers, rooftops, basements), the app operates fully from local SQLite. The Boss does **not** update Sites/Categories mid-day; if an exceptional mid-day change happens, the Boss notifies FTs out-of-band to re-open the app and refresh.
 
 1. **Initial Sync (requires internet, one-time per session)**:
-   - On app open, if online, call `GET /api/sites/sync` to fetch all `INCOMPLETE` Sites + nested Categories + PictureTypes.
+   - On app open, if online, call `GET /api/sites/sync` to fetch all Sites + nested Categories + PictureTypes.
    - Upsert into local SQLite tables (`sites`, `categories`, `picture_types`).
    - Update `sync_meta` with the timestamp.
    - If offline, skip — use whatever is already cached.
@@ -98,7 +98,7 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
     ]
   }
   ```
-- Mobile performs an **upsert** (insert-or-replace by `id`) into local SQLite. COMPLETED Sites are excluded from the response to keep payload small.
+- Mobile performs an **upsert** (insert-or-replace by `id`) into local SQLite. The response includes both `INCOMPLETE` and `COMPLETED` Sites so completed work does not disappear from the mobile cache after uploads sync.
 
 ### C. Category-Based Excel Export Flow
 1. Boss clicks "Export to Excel" on a Site in the Next.js Dashboard.
@@ -120,14 +120,14 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
 ## 5. AI EXECUTION PLAN (VIBE-CODING PHASES)
 *AI Assistant: Execute these phases sequentially. Do not jump ahead. Wait for user confirmation before moving to the next phase.*
 
-### PHASE 1: Backend Foundation (Next.js Route Handlers + Prisma + Postgres)
+### PHASE 1: Backend Foundation (Next.js Route Handlers + Prisma + SQLite)
 - Initialize a Next.js 14+ App Router TypeScript project (this same project also hosts the web dashboard — there is NO separate Node/Express server).
-- Setup Prisma and generate the schema based on Section 3.A.
+- Setup Prisma with SQLite and generate the schema based on Section 3.A.
 - Implement basic security via a shared middleware/helper used inside each Route Handler:
   - Mobile routes (under `app/api/sites/sync`, `app/api/photos/upload`, etc.) require a static `x-api-key` header matching `process.env.MOBILE_API_KEY`.
   - Dashboard routes require a JWT cookie issued after the Boss submits a password matching `process.env.ADMIN_PASSWORD`.
 - Create CRUD Route Handlers for the Boss to create Sites, Categories, and Picture Types (`app/api/sites/route.ts`, `app/api/categories/route.ts`, `app/api/picture-types/route.ts`).
-- Implement `GET /api/sites/sync` per Section 4.B.1 — returns all `INCOMPLETE` Sites with nested Categories and PictureTypes for mobile sync.
+- Implement `GET /api/sites/sync` per Section 4.B.1 — returns all Sites with nested Categories and PictureTypes for mobile sync.
 
 ### PHASE 2: File Upload API & Status Cascade Logic
 - Create the Route Handler `app/api/photos/upload/route.ts` with `export const runtime = 'nodejs'` (required for `fs` access).

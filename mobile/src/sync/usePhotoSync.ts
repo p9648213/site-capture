@@ -8,6 +8,7 @@ export type PhotoSyncState = {
   isSyncing: boolean;
   lastMessage: string | null;
   lastError: string | null;
+  syncRevision: number;
   refreshPendingCount: () => Promise<void>;
   syncNow: () => Promise<void>;
 };
@@ -21,6 +22,7 @@ export function usePhotoSync(enabled: boolean): PhotoSyncState {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [syncRevision, setSyncRevision] = useState(0);
 
   const refreshPendingCount = useCallback(async () => {
     setPendingCount(await countPendingPhotos());
@@ -36,8 +38,12 @@ export function usePhotoSync(enabled: boolean): PhotoSyncState {
       setPendingCount(result.remaining);
 
       if (result.attempted > 0) {
+        if (result.synced > 0) {
+          setSyncRevision((current) => current + 1);
+        }
+
         setLastMessage(
-          `Uploaded ${result.synced} photo${result.synced === 1 ? "" : "s"}. ${result.remaining} pending.`,
+          `Uploaded ${result.synced} photo${result.synced === 1 ? "" : "s"} and refreshed site data. ${result.remaining} pending.`,
         );
       }
     } catch (error) {
@@ -83,6 +89,7 @@ export function usePhotoSync(enabled: boolean): PhotoSyncState {
     isSyncing,
     lastMessage,
     lastError,
+    syncRevision,
     refreshPendingCount,
     syncNow,
   };

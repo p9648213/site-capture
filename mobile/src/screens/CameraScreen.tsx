@@ -13,6 +13,7 @@ import { CameraView, useCameraPermissions, type CameraCapturedPicture } from "ex
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Location from "expo-location";
+import * as Network from "expo-network";
 import { captureRef } from "react-native-view-shot";
 import { type RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -29,6 +30,10 @@ type CaptureMetadata = {
   longitude: number | null;
   capturedAt: string;
 };
+
+function isOnline(networkState: Network.NetworkState) {
+  return networkState.isConnected === true && networkState.isInternetReachable !== false;
+}
 
 function formatCapturedAt(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -136,6 +141,12 @@ export function CameraScreen() {
         capturedAt: metadata.capturedAt,
       });
       await photoSync.refreshPendingCount();
+
+      const networkState = await Network.getNetworkStateAsync();
+
+      if (isOnline(networkState)) {
+        await photoSync.syncNow();
+      }
 
       navigation.goBack();
     } catch (error) {

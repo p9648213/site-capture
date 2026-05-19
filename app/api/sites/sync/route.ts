@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Status } from "@prisma/client";
 import { requireMobileApiKey } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -11,9 +10,6 @@ export async function GET(request: NextRequest) {
   }
 
   const sites = await prisma.site.findMany({
-    where: {
-      status: Status.INCOMPLETE,
-    },
     orderBy: {
       updatedAt: "desc",
     },

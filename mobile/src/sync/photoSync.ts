@@ -1,5 +1,7 @@
 import { uploadPendingPhoto } from "../api/photos";
+import { fetchSitesForSync } from "../api/sites";
 import { countPendingPhotos, getPendingUploadPhotos, markPhotoSynced } from "../db/photos";
+import { upsertSyncedSites } from "../db/sites";
 
 export type PhotoSyncResult = {
   attempted: number;
@@ -28,6 +30,11 @@ export async function syncPendingPhotos(): Promise<PhotoSyncResult> {
       const serverPhotoId = await uploadPendingPhoto(photo);
       await markPhotoSynced(photo.id, serverPhotoId);
       synced += 1;
+    }
+
+    if (synced > 0) {
+      const sitesPayload = await fetchSitesForSync();
+      await upsertSyncedSites(sitesPayload);
     }
 
     return {

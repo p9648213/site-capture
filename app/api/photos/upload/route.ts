@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { requireMobileApiKey } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { prisma } from "@/lib/prisma";
@@ -22,7 +21,7 @@ function readRequiredInt(form: FormData, key: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function readOptionalDecimal(form: FormData, key: string) {
+function readOptionalNumber(form: FormData, key: string) {
   const value = form.get(key);
 
   if (value === null || value === "") {
@@ -34,7 +33,7 @@ function readOptionalDecimal(form: FormData, key: string) {
   }
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? new Prisma.Decimal(value) : undefined;
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function readOptionalString(form: FormData, key: string) {
@@ -69,8 +68,8 @@ export async function POST(request: NextRequest) {
   const siteId = readRequiredInt(form, "siteId");
   const categoryId = readRequiredInt(form, "categoryId");
   const pictureTypeId = readRequiredInt(form, "pictureTypeId");
-  const latitude = readOptionalDecimal(form, "latitude");
-  const longitude = readOptionalDecimal(form, "longitude");
+  const latitude = readOptionalNumber(form, "latitude");
+  const longitude = readOptionalNumber(form, "longitude");
   const localUri = readOptionalString(form, "localUri");
   const capturedAt = readCapturedAt(form);
   const file = form.get("file");

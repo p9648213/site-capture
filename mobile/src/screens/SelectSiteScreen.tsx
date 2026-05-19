@@ -117,6 +117,12 @@ export function SelectSiteScreen() {
     }, [photoSync, reloadCachedData]),
   );
 
+  useEffect(() => {
+    if (photoSync.syncRevision > 0) {
+      reloadCachedData();
+    }
+  }, [photoSync.syncRevision, reloadCachedData]);
+
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.screen}>
       <View style={styles.header}>

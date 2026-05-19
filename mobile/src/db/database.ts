@@ -11,6 +11,7 @@ export async function initializeDatabase() {
   const db = await getDatabase();
 
   await db.execAsync(`
+    PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = WAL;
 
     CREATE TABLE IF NOT EXISTS sites (

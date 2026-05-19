@@ -7,11 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "db:up": "docker compose up -d postgres",
-    "db:down": "docker compose down",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:push": "prisma db push"
   },
   "dependencies": {
     "@prisma/client": "^6.19.0",

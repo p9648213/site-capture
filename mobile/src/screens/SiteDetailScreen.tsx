@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -12,6 +12,7 @@ import { useFocusEffect, type RouteProp, useNavigation, useRoute } from "@react-
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { getSiteWithCategories } from "../db/sites";
 import type { RootStackParamList } from "../navigation/types";
+import { usePhotoSyncContext } from "../sync/PhotoSyncContext";
 import type { SiteWithCategories } from "../types/site";
 
 type Route = RouteProp<RootStackParamList, "SiteDetail">;
@@ -27,8 +28,22 @@ function getCategoryProgress(category: SiteWithCategories["categories"][number])
 export function SiteDetailScreen() {
   const route = useRoute<Route>();
   const navigation = useNavigation<Navigation>();
+  const photoSync = usePhotoSyncContext();
   const [site, setSite] = useState<SiteWithCategories | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const loadSite = useCallback(
+    async (showLoading: boolean) => {
+      if (showLoading) {
+        setIsLoading(true);
+      }
+
+      const cachedSite = await getSiteWithCategories(route.params.siteId);
+      setSite(cachedSite);
+      setIsLoading(false);
+    },
+    [route.params.siteId],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -51,6 +66,12 @@ export function SiteDetailScreen() {
       };
     }, [route.params.siteId]),
   );
+
+  useEffect(() => {
+    if (photoSync.syncRevision > 0) {
+      loadSite(false);
+    }
+  }, [loadSite, photoSync.syncRevision]);
 
   if (isLoading) {
     return (

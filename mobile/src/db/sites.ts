@@ -55,8 +55,30 @@ function mapPictureType(row: PictureTypeRow): PictureType {
   };
 }
 
+function placeholders(values: unknown[]) {
+  return values.map(() => "?").join(", ");
+}
+
+async function deleteRowsNotIn(db: Awaited<ReturnType<typeof getDatabase>>, table: string, ids: number[]) {
+  if (ids.length === 0) {
+    await db.runAsync(`DELETE FROM ${table}`);
+    return;
+  }
+
+  await db.runAsync(`DELETE FROM ${table} WHERE id NOT IN (${placeholders(ids)})`, ids);
+}
+
 export async function upsertSyncedSites(payload: SyncResponse) {
   const db = await getDatabase();
+  const syncedSiteIds = payload.sites.map((site) => site.id);
+  const syncedCategoryIds = payload.sites.flatMap((site) =>
+    site.categories.map((category) => category.id),
+  );
+  const syncedPictureTypeIds = payload.sites.flatMap((site) =>
+    site.categories.flatMap((category) =>
+      category.pictureTypes.map((pictureType) => pictureType.id),
+    ),
+  );
 
   await db.withTransactionAsync(async () => {
     for (const site of payload.sites) {
@@ -103,6 +125,10 @@ export async function upsertSyncedSites(payload: SyncResponse) {
         }
       }
     }
+
+    await deleteRowsNotIn(db, "picture_types", syncedPictureTypeIds);
+    await deleteRowsNotIn(db, "categories", syncedCategoryIds);
+    await deleteRowsNotIn(db, "sites", syncedSiteIds);
 
     await db.runAsync(
       `INSERT INTO sync_meta (key, value)
