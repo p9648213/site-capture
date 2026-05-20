@@ -1,10 +1,10 @@
-import { getDatabase } from "./database";
+import { getDatabase, runSerializedTransaction } from "./database";
 import type { Category, PictureType, Site, SiteWithCategories, SyncResponse } from "../types/site";
 
 type SiteRow = {
   id: number;
   name: string;
-  address: string;
+  site_id: string;
   status: Site["status"];
   last_synced_at: string | null;
 };
@@ -29,7 +29,7 @@ function mapSite(row: SiteRow): Site {
   return {
     id: row.id,
     name: row.name,
-    address: row.address,
+    siteId: row.site_id,
     status: row.status,
     lastSyncedAt: row.last_synced_at,
   };
@@ -59,7 +59,9 @@ function placeholders(values: unknown[]) {
   return values.map(() => "?").join(", ");
 }
 
-async function deleteRowsNotIn(db: Awaited<ReturnType<typeof getDatabase>>, table: string, ids: number[]) {
+type DatabaseExecutor = Pick<Awaited<ReturnType<typeof getDatabase>>, "runAsync">;
+
+async function deleteRowsNotIn(db: DatabaseExecutor, table: string, ids: number[]) {
   if (ids.length === 0) {
     await db.runAsync(`DELETE FROM ${table}`);
     return;
@@ -69,7 +71,6 @@ async function deleteRowsNotIn(db: Awaited<ReturnType<typeof getDatabase>>, tabl
 }
 
 export async function upsertSyncedSites(payload: SyncResponse) {
-  const db = await getDatabase();
   const syncedSiteIds = payload.sites.map((site) => site.id);
   const syncedCategoryIds = payload.sites.flatMap((site) =>
     site.categories.map((category) => category.id),
@@ -80,21 +81,21 @@ export async function upsertSyncedSites(payload: SyncResponse) {
     ),
   );
 
-  await db.withTransactionAsync(async () => {
+  await runSerializedTransaction(async (tx) => {
     for (const site of payload.sites) {
-      await db.runAsync(
-        `INSERT INTO sites (id, name, address, status, last_synced_at)
+      await tx.runAsync(
+        `INSERT INTO sites (id, name, site_id, status, last_synced_at)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
-           address = excluded.address,
+           site_id = excluded.site_id,
            status = excluded.status,
            last_synced_at = excluded.last_synced_at`,
-        [site.id, site.name, site.address, site.status, payload.syncedAt],
+        [site.id, site.name, site.siteId, site.status, payload.syncedAt],
       );
 
       for (const category of site.categories) {
-        await db.runAsync(
+        await tx.runAsync(
           `INSERT INTO categories (id, site_id, name, status, last_synced_at)
            VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
@@ -106,7 +107,7 @@ export async function upsertSyncedSites(payload: SyncResponse) {
         );
 
         for (const pictureType of category.pictureTypes) {
-          await db.runAsync(
+          await tx.runAsync(
             `INSERT INTO picture_types (id, category_id, name, is_fulfilled, last_synced_at)
              VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
@@ -126,11 +127,11 @@ export async function upsertSyncedSites(payload: SyncResponse) {
       }
     }
 
-    await deleteRowsNotIn(db, "picture_types", syncedPictureTypeIds);
-    await deleteRowsNotIn(db, "categories", syncedCategoryIds);
-    await deleteRowsNotIn(db, "sites", syncedSiteIds);
+    await deleteRowsNotIn(tx, "picture_types", syncedPictureTypeIds);
+    await deleteRowsNotIn(tx, "categories", syncedCategoryIds);
+    await deleteRowsNotIn(tx, "sites", syncedSiteIds);
 
-    await db.runAsync(
+    await tx.runAsync(
       `INSERT INTO sync_meta (key, value)
        VALUES ('sites_last_synced_at', ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -151,7 +152,7 @@ export async function getLastSyncedAt() {
 export async function getSites() {
   const db = await getDatabase();
   const rows = await db.getAllAsync<SiteRow>(
-    "SELECT id, name, address, status, last_synced_at FROM sites ORDER BY name COLLATE NOCASE ASC",
+    "SELECT id, name, site_id, status, last_synced_at FROM sites ORDER BY name COLLATE NOCASE ASC",
   );
 
   return rows.map(mapSite);
@@ -160,7 +161,7 @@ export async function getSites() {
 export async function getSiteWithCategories(siteId: number): Promise<SiteWithCategories | null> {
   const db = await getDatabase();
   const siteRow = await db.getFirstAsync<SiteRow>(
-    "SELECT id, name, address, status, last_synced_at FROM sites WHERE id = ?",
+    "SELECT id, name, site_id, status, last_synced_at FROM sites WHERE id = ?",
     [siteId],
   );
 

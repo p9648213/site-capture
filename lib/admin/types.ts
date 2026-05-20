@@ -5,7 +5,12 @@ export type AdminPictureType = {
   categoryId: number;
   name: string;
   isFulfilled: boolean;
+  sortOrder: number;
   updatedAt: string;
+  latestPhoto: {
+    id: number;
+    capturedAt: string;
+  } | null;
 };
 
 export type AdminCategory = {
@@ -20,7 +25,7 @@ export type AdminCategory = {
 export type AdminSite = {
   id: number;
   name: string;
-  address: string;
+  siteId: string;
   status: AdminStatus;
   updatedAt: string;
   categories: AdminCategory[];

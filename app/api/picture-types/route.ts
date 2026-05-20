@@ -24,8 +24,16 @@ export async function POST(request: NextRequest) {
       where: { id: parsed.data.categoryId },
       select: { siteId: true },
     });
+    const lastPictureType = await tx.pictureType.findFirst({
+      where: { categoryId: parsed.data.categoryId },
+      orderBy: [{ sortOrder: "desc" }, { id: "desc" }],
+      select: { sortOrder: true },
+    });
     const createdPictureType = await tx.pictureType.create({
-      data: parsed.data,
+      data: {
+        ...parsed.data,
+        sortOrder: (lastPictureType?.sortOrder ?? 0) + 1,
+      },
     });
 
     await markCategoryAndSiteIncomplete(tx, {

@@ -35,7 +35,7 @@ Key requirements:
 ### 3.A Server Schema (Prisma ORM — SQLite)
 The AI should generate a `schema.prisma` file based on this simplified schema. **(No User Table)**
 
-- **Site**: `id`, `name`, `address`, `status` (INCOMPLETE, COMPLETED), `updatedAt`.
+- **Site**: `id`, `name`, `siteId`, `status` (INCOMPLETE, COMPLETED), `updatedAt`.
 - **Category**: `id`, `siteId` (Relation to Site), `name` (e.g., "Indoor Pictures", "Outdoor Pictures"), `status` (INCOMPLETE, COMPLETED), `updatedAt`.
 - **PictureType**: `id`, `categoryId` (Relation to Category), `name` (e.g., "Tower-1", "Entrance"), `isFulfilled` (Boolean - defaults to false), `updatedAt`.
 - **Photo**: `id`, `pictureTypeId` (Relation to PictureType), `localUri` (mobile only), `serverFilePath` (e.g., `/uploads/site_1/category_2/type_5/img.jpg`), `latitude`, `longitude`, `capturedAt`.
@@ -43,7 +43,7 @@ The AI should generate a `schema.prisma` file based on this simplified schema. *
 ### 3.B Mobile Local Schema (SQLite via `expo-sqlite`)
 The mobile app mirrors server entities locally so it can operate fully offline. Sites/Categories/PictureTypes are read-only on mobile (server is authoritative). Photos are write-locally / push-to-server.
 
-- **sites**: `id`, `name`, `address`, `status`, `last_synced_at`.
+- **sites**: `id`, `name`, `site_id`, `status`, `last_synced_at`.
 - **categories**: `id`, `site_id`, `name`, `status`, `last_synced_at`.
 - **picture_types**: `id`, `category_id`, `name`, `is_fulfilled`, `last_synced_at`.
 - **photos**: `id` (local), `picture_type_id`, `local_uri`, `latitude`, `longitude`, `captured_at`, `sync_status` ('PENDING' | 'SYNCED'), `server_photo_id` (nullable).
@@ -85,7 +85,7 @@ Do NOT use cloud storage. Images are stored on the Next.js server's disk.
     "syncedAt": "2026-05-18T10:00:00Z",
     "sites": [
       {
-        "id": 1, "name": "...", "address": "...", "status": "INCOMPLETE", "updatedAt": "...",
+        "id": 1, "name": "...", "siteId": "...", "status": "INCOMPLETE", "updatedAt": "...",
         "categories": [
           {
             "id": 10, "name": "...", "status": "INCOMPLETE", "updatedAt": "...",

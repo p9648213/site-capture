@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -24,11 +24,15 @@ import { buildLocalPhotoUri, ensurePhotoDirectory } from "../utils/photos";
 
 type Route = RouteProp<RootStackParamList, "Camera">;
 type Navigation = NativeStackNavigationProp<RootStackParamList, "Camera">;
+type CameraFacing = "back" | "front";
+const PHOTO_ASPECT_RATIO = 1;
 
 type CaptureMetadata = {
   latitude: number | null;
   longitude: number | null;
   capturedAt: string;
+  city: string | null;
+  country: string | null;
 };
 
 function isOnline(networkState: Network.NetworkState) {
@@ -38,16 +42,62 @@ function isOnline(networkState: Network.NetworkState) {
 function formatCapturedAt(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     year: "numeric",
-    month: "short",
+    month: "long",
     day: "numeric",
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+    hour12: false,
   }).format(new Date(value));
 }
 
 function formatCoordinate(value: number | null) {
   return value === null ? "Unavailable" : value.toFixed(6);
+}
+
+function getCity(address: Location.LocationGeocodedAddress | null) {
+  return address?.city ?? address?.district ?? address?.subregion ?? address?.region ?? null;
+}
+
+async function reverseGeocodeLocation(location: Location.LocationObject | null) {
+  if (location === null) {
+    return null;
+  }
+
+  return Location.reverseGeocodeAsync({
+    latitude: location.coords.latitude,
+    longitude: location.coords.longitude,
+  })
+    .then((results) => results[0] ?? null)
+    .catch(() => null);
+}
+
+function buildMetadata(
+  capturedAt: string,
+  location: Location.LocationObject | null,
+  address: Location.LocationGeocodedAddress | null,
+): CaptureMetadata {
+  return {
+    latitude: location?.coords.latitude ?? null,
+    longitude: location?.coords.longitude ?? null,
+    capturedAt,
+    city: getCity(address),
+    country: address?.country ?? null,
+  };
+}
+
+function WatermarkOverlay({ metadata, siteName }: { metadata: CaptureMetadata; siteName: string }) {
+  return (
+    <View style={styles.watermark}>
+      <Text style={styles.watermarkText}>{formatCapturedAt(metadata.capturedAt)}</Text>
+      <Text style={styles.watermarkText}>
+        {formatCoordinate(metadata.latitude)}, {formatCoordinate(metadata.longitude)}
+      </Text>
+      <Text style={styles.watermarkText}>{metadata.city ?? "City unavailable"}</Text>
+      <Text style={styles.watermarkText}>{metadata.country ?? "Country unavailable"}</Text>
+      <Text style={styles.watermarkText}>{siteName}</Text>
+    </View>
+  );
 }
 
 export function CameraScreen() {
@@ -61,6 +111,15 @@ export function CameraScreen() {
   const [capturedPhoto, setCapturedPhoto] = useState<CameraCapturedPicture | null>(null);
   const [metadata, setMetadata] = useState<CaptureMetadata | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [facing, setFacing] = useState<CameraFacing>("back");
+  const [isFlashOn, setIsFlashOn] = useState(false);
+  const [liveMetadata, setLiveMetadata] = useState<CaptureMetadata>({
+    latitude: null,
+    longitude: null,
+    capturedAt: new Date().toISOString(),
+    city: null,
+    country: null,
+  });
 
   const hasCameraPermission = cameraPermission?.granted === true;
   const hasLocationPermission = locationPermission?.granted === true;
@@ -69,6 +128,44 @@ export function CameraScreen() {
     await requestCameraPermission();
     await requestLocationPermission();
   }
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveMetadata((current) => ({
+        ...current,
+        capturedAt: new Date().toISOString(),
+      }));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLocationPermission) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function refreshLiveLocation() {
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      }).catch(() => null);
+      const address = await reverseGeocodeLocation(location);
+
+      if (!isMounted) {
+        return;
+      }
+
+      setLiveMetadata((current) => buildMetadata(current.capturedAt, location, address));
+    }
+
+    void refreshLiveLocation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [hasLocationPermission]);
 
   async function takePhoto() {
     if (!cameraRef.current || isBusy) {
@@ -90,12 +187,13 @@ export function CameraScreen() {
           : Promise.resolve(null),
       ]);
 
+      const capturedAt = new Date().toISOString();
+      const address = await reverseGeocodeLocation(location);
+      const capturedMetadata = buildMetadata(capturedAt, location, address);
+
       setCapturedPhoto(photo);
-      setMetadata({
-        latitude: location?.coords.latitude ?? null,
-        longitude: location?.coords.longitude ?? null,
-        capturedAt: new Date().toISOString(),
-      });
+      setMetadata(capturedMetadata);
+      setLiveMetadata(capturedMetadata);
     } catch (error) {
       Alert.alert(
         "Capture failed",
@@ -104,6 +202,11 @@ export function CameraScreen() {
     } finally {
       setIsBusy(false);
     }
+  }
+
+  function toggleFacing() {
+    setFacing((current) => (current === "back" ? "front" : "back"));
+    setIsFlashOn(false);
   }
 
   async function savePhoto() {
@@ -178,14 +281,7 @@ export function CameraScreen() {
       <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.screen}>
         <View ref={previewRef} collapsable={false} style={styles.previewCapture}>
           <ImageBackground source={{ uri: capturedPhoto.uri }} resizeMode="cover" style={styles.previewImage}>
-            <View style={styles.watermark}>
-              <Text style={styles.watermarkTitle}>{route.params.siteName}</Text>
-              <Text style={styles.watermarkText}>{route.params.pictureTypeName}</Text>
-              <Text style={styles.watermarkText}>{formatCapturedAt(metadata.capturedAt)}</Text>
-              <Text style={styles.watermarkText}>
-                GPS {formatCoordinate(metadata.latitude)}, {formatCoordinate(metadata.longitude)}
-              </Text>
-            </View>
+            <WatermarkOverlay metadata={metadata} siteName={route.params.siteName} />
           </ImageBackground>
         </View>
         <View style={styles.previewActions}>
@@ -209,13 +305,38 @@ export function CameraScreen() {
 
   return (
     <View style={styles.cameraScreen}>
-      <CameraView ref={cameraRef} style={styles.camera} facing="back" mode="picture" />
-      <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.cameraOverlay}>
+      <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.cameraLayout}>
         <View style={styles.cameraHeader}>
           <Text style={styles.cameraSite}>{route.params.siteName}</Text>
           <Text style={styles.cameraType}>{route.params.pictureTypeName}</Text>
         </View>
+        <View style={styles.cameraFrame}>
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            facing={facing}
+            mode="picture"
+            ratio="1:1"
+            flash={isFlashOn ? "on" : "off"}
+            enableTorch={facing === "back" && isFlashOn}
+          />
+          <WatermarkOverlay metadata={liveMetadata} siteName={route.params.siteName} />
+        </View>
         <View style={styles.cameraFooter}>
+          <View style={styles.cameraControls}>
+            <Pressable
+              style={[styles.cameraControlButton, isFlashOn && styles.cameraControlButtonActive]}
+              disabled={facing === "front"}
+              onPress={() => setIsFlashOn((current) => !current)}
+            >
+              <Text style={[styles.cameraControlText, facing === "front" && styles.cameraControlTextDisabled]}>
+                {isFlashOn ? "Flash On" : "Flash Off"}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.cameraControlButton} onPress={toggleFacing}>
+              <Text style={styles.cameraControlText}>{facing === "back" ? "Back" : "Front"}</Text>
+            </Pressable>
+          </View>
           <Pressable style={styles.shutterButton} disabled={isBusy} onPress={takePhoto}>
             {isBusy ? <ActivityIndicator color="#ffffff" /> : <View style={styles.shutterInner} />}
           </Pressable>
@@ -252,12 +373,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000000",
   },
-  camera: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  cameraOverlay: {
+  cameraLayout: {
     flex: 1,
     justifyContent: "space-between",
+  },
+  cameraFrame: {
+    width: "100%",
+    aspectRatio: PHOTO_ASPECT_RATIO,
+    overflow: "hidden",
+    backgroundColor: "#000000",
+  },
+  camera: {
+    flex: 1,
   },
   cameraHeader: {
     margin: 16,
@@ -280,6 +407,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingBottom: 30,
   },
+  cameraControls: {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 18,
+    paddingHorizontal: 24,
+  },
+  cameraControlButton: {
+    minWidth: 104,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.75)",
+    backgroundColor: "rgba(0, 0, 0, 0.38)",
+    paddingHorizontal: 14,
+  },
+  cameraControlButtonActive: {
+    backgroundColor: "rgba(37, 99, 235, 0.78)",
+  },
+  cameraControlText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  cameraControlTextDisabled: {
+    color: "#9ca3af",
+  },
   shutterButton: {
     width: 78,
     height: 78,
@@ -297,29 +453,30 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
   },
   previewCapture: {
-    flex: 1,
+    width: "100%",
+    aspectRatio: PHOTO_ASPECT_RATIO,
+    alignSelf: "center",
     backgroundColor: "#000000",
   },
   previewImage: {
     flex: 1,
-    justifyContent: "flex-end",
   },
   watermark: {
-    margin: 16,
-    borderRadius: 8,
-    backgroundColor: "rgba(15, 23, 42, 0.78)",
-    padding: 12,
-  },
-  watermarkTitle: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "800",
+    position: "absolute",
+    right: 16,
+    bottom: 16,
+    maxWidth: "72%",
+    alignItems: "flex-end",
   },
   watermarkText: {
-    marginTop: 3,
-    color: "#e5e7eb",
+    color: "#ffffff",
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
+    lineHeight: 18,
+    textAlign: "right",
+    textShadowColor: "rgba(0, 0, 0, 0.85)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   previewActions: {
     flexDirection: "row",

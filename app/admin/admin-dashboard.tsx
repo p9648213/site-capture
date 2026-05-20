@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  GripVertical,
   Pencil,
   FolderPlus,
   ImagePlus,
@@ -22,7 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import type { AdminCategory, AdminSite } from "@/lib/admin/types";
+import type { AdminCategory, AdminPictureType, AdminSite } from "@/lib/admin/types";
 
 type Props = {
   initialSites: AdminSite[];
@@ -114,7 +115,7 @@ export function AdminDashboard({ initialSites }: Props) {
     try {
       await postJson("/api/sites", {
         name: form.get("name"),
-        address: form.get("address"),
+        siteId: form.get("siteId"),
       });
       formElement.reset();
       router.refresh();
@@ -216,7 +217,7 @@ export function AdminDashboard({ initialSites }: Props) {
               <CardContent>
                 <form className="space-y-4" onSubmit={submitSite}>
                   <Field label="Site name" name="name" placeholder="North Tower" />
-                  <Field label="Address" name="address" placeholder="1200 Ridge Road" />
+                  <Field label="Site ID" name="siteId" placeholder="SITE-001" />
                   {siteForm.error ? <p className="text-sm text-red-600">{siteForm.error}</p> : null}
                   <Button type="submit" disabled={siteForm.isSubmitting}>
                     <Plus aria-hidden="true" className="h-4 w-4" />
@@ -454,7 +455,7 @@ function SiteOverview({ site }: { site: AdminSite }) {
               </Button>
               <Badge variant={statusVariant(site.status)}>{site.status}</Badge>
             </div>
-            <p className="mt-1 text-sm text-slate-600">{site.address}</p>
+            <p className="mt-1 text-sm text-slate-600">Site ID: {site.siteId}</p>
             <p className="mt-1 text-xs text-slate-500">Updated {formatDate(site.updatedAt)}</p>
             {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
           </div>
@@ -591,17 +592,6 @@ function CategoryOverview({ category }: { category: AdminCategory }) {
         <Badge variant={statusVariant(category.status)}>{category.status}</Badge>
       </div>
       {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {category.pictureTypes.length === 0 ? (
-          <span className="text-sm text-slate-500">No picture types.</span>
-        ) : (
-          category.pictureTypes.map((pictureType) => (
-            <Badge key={pictureType.id} variant={pictureType.isFulfilled ? "completed" : "default"}>
-              {pictureType.name}
-            </Badge>
-          ))
-        )}
-      </div>
       <PictureTypeManager category={category} />
       <ConfirmDeleteDialog
         open={isDeleteDialogOpen}
@@ -629,7 +619,10 @@ function PictureTypeManager({
   const [name, setName] = useState(selectedPictureType?.name ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [previewPictureType, setPreviewPictureType] = useState<AdminPictureType | null>(null);
+  const [draggedPictureTypeId, setDraggedPictureTypeId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!selectedPictureType) {
@@ -686,24 +679,99 @@ function PictureTypeManager({
     }
   }
 
+  async function reorderPictureTypes(targetPictureTypeId: number) {
+    if (draggedPictureTypeId === null || draggedPictureTypeId === targetPictureTypeId) {
+      return;
+    }
+
+    const orderedIds = category.pictureTypes.map((pictureType) => pictureType.id);
+    const fromIndex = orderedIds.indexOf(draggedPictureTypeId);
+    const toIndex = orderedIds.indexOf(targetPictureTypeId);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedPictureTypeId(null);
+      return;
+    }
+
+    const [movedId] = orderedIds.splice(fromIndex, 1);
+    orderedIds.splice(toIndex, 0, movedId);
+
+    setIsReordering(true);
+    setError(null);
+
+    try {
+      await postJson(`/api/categories/${category.id}/picture-types/reorder`, {
+        pictureTypeIds: orderedIds,
+      });
+      router.refresh();
+    } catch {
+      setError("Picture type order could not be updated.");
+    } finally {
+      setDraggedPictureTypeId(null);
+      setIsReordering(false);
+    }
+  }
+
   if (category.pictureTypes.length === 0) {
     return null;
   }
 
   return (
-    <div className="mt-3 grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
-        <Select
-          aria-label="Select picture type"
-          value={selectedPictureTypeId}
-          onChange={(event) => selectPictureType(event.target.value)}
-        >
-          {category.pictureTypes.map((pictureType) => (
-            <option key={pictureType.id} value={pictureType.id}>
-              {pictureType.name}
-            </option>
-          ))}
-        </Select>
+    <div className="mt-3 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+      <div className="flex flex-wrap gap-2">
+        {category.pictureTypes.map((pictureType) => (
+          <button
+            key={pictureType.id}
+            type="button"
+            draggable
+            title={pictureType.latestPhoto ? "Click to edit. Double-click to view photo. Drag to reorder." : "Click to edit. Drag to reorder."}
+            className={[
+              "inline-flex min-h-10 cursor-grab items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold shadow-sm active:cursor-grabbing",
+              pictureType.id === selectedPictureType?.id
+                ? "border-slate-950 bg-white text-slate-950"
+                : "border-slate-200 bg-white text-slate-700",
+              pictureType.isFulfilled ? "ring-1 ring-emerald-200" : "",
+              draggedPictureTypeId === pictureType.id ? "opacity-50" : "",
+            ].join(" ")}
+            onClick={() => {
+              selectPictureType(pictureType.id.toString());
+            }}
+            onDoubleClick={() => {
+              if (pictureType.latestPhoto) {
+                setPreviewPictureType(pictureType);
+              }
+            }}
+            onDragStart={(event) => {
+              setDraggedPictureTypeId(pictureType.id);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", pictureType.id.toString());
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              reorderPictureTypes(pictureType.id);
+            }}
+            onDragEnd={() => setDraggedPictureTypeId(null)}
+            disabled={isReordering}
+          >
+            <GripVertical aria-hidden="true" className="h-4 w-4 text-slate-400" />
+            <span>{pictureType.name}</span>
+            <span
+              className={
+                pictureType.isFulfilled
+                  ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"
+                  : "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"
+              }
+            >
+              {pictureType.isFulfilled ? "DONE" : "MISSING"}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto]">
         <Input
           aria-label="Picture type name"
           value={name}
@@ -722,6 +790,7 @@ function PictureTypeManager({
           Delete
         </Button>
       </div>
+      {isReordering ? <p className="text-sm text-slate-500">Saving picture type order...</p> : null}
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <ConfirmDeleteDialog
         open={isDeleteDialogOpen}
@@ -730,6 +799,47 @@ function PictureTypeManager({
         onCancel={() => setIsDeleteDialogOpen(false)}
         onConfirm={deletePictureType}
       />
+      <PhotoPreviewDialog
+        pictureType={previewPictureType}
+        onClose={() => setPreviewPictureType(null)}
+      />
+    </div>
+  );
+}
+
+function PhotoPreviewDialog({
+  pictureType,
+  onClose,
+}: {
+  pictureType: AdminPictureType | null;
+  onClose: () => void;
+}) {
+  if (!pictureType?.latestPhoto) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4">
+      <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-950">{pictureType.name}</h2>
+            <p className="text-xs text-slate-500">Captured {formatDate(pictureType.latestPhoto.capturedAt)}</p>
+          </div>
+          <Button variant="ghost" onClick={onClose}>
+            <X aria-hidden="true" className="h-4 w-4" />
+            Close
+          </Button>
+        </div>
+        <div className="min-h-0 bg-slate-950 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`/api/photos/${pictureType.latestPhoto.id}/image`}
+            alt={`${pictureType.name} latest uploaded photo`}
+            className="mx-auto max-h-[75vh] max-w-full object-contain"
+          />
+        </div>
+      </div>
     </div>
   );
 }

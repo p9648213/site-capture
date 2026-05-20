@@ -122,7 +122,7 @@ export async function GET(_request: Request, { params }: Params) {
         orderBy: { id: "asc" },
         include: {
           pictureTypes: {
-            orderBy: { id: "asc" },
+            orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
             include: {
               photos: {
                 orderBy: { capturedAt: "asc" },
@@ -195,7 +195,7 @@ export async function GET(_request: Request, { params }: Params) {
     worksheet.getCell("A4").value = "Site ID";
     worksheet.getCell("B4").value = ":";
     worksheet.mergeCells("C4:D4");
-    worksheet.getCell("C4").value = site.name;
+    worksheet.getCell("C4").value = site.siteId;
     worksheet.getCell("C4").alignment = { horizontal: "center", vertical: "middle" };
     worksheet.getCell("E4").value = "Site Name";
     worksheet.getCell("F4").value = ":";

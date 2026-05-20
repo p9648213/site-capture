@@ -1,5 +1,5 @@
-import { getDatabase } from "./database";
-import type { PendingUploadPhoto } from "../types/photo";
+import { getDatabase, runSerializedTransaction, runSerializedWrite } from "./database";
+import type { LocalPhoto, PendingUploadPhoto } from "../types/photo";
 
 export type PendingPhotoInput = {
   siteId: number;
@@ -12,10 +12,8 @@ export type PendingPhotoInput = {
 };
 
 export async function insertPendingPhoto(input: PendingPhotoInput) {
-  const db = await getDatabase();
-
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(
+  await runSerializedTransaction(async (tx) => {
+    await tx.runAsync(
       `INSERT INTO photos (
         picture_type_id,
         local_uri,
@@ -35,26 +33,26 @@ export async function insertPendingPhoto(input: PendingPhotoInput) {
       ],
     );
 
-    await db.runAsync("UPDATE picture_types SET is_fulfilled = 1 WHERE id = ?", [
+    await tx.runAsync("UPDATE picture_types SET is_fulfilled = 1 WHERE id = ?", [
       input.pictureTypeId,
     ]);
 
-    const unfulfilledPictureTypes = await db.getFirstAsync<{ count: number }>(
+    const unfulfilledPictureTypes = await tx.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) AS count FROM picture_types WHERE category_id = ? AND is_fulfilled = 0",
       [input.categoryId],
     );
 
-    await db.runAsync("UPDATE categories SET status = ? WHERE id = ?", [
+    await tx.runAsync("UPDATE categories SET status = ? WHERE id = ?", [
       unfulfilledPictureTypes?.count === 0 ? "COMPLETED" : "INCOMPLETE",
       input.categoryId,
     ]);
 
-    const incompleteCategories = await db.getFirstAsync<{ count: number }>(
+    const incompleteCategories = await tx.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) AS count FROM categories WHERE site_id = ? AND status = 'INCOMPLETE'",
       [input.siteId],
     );
 
-    await db.runAsync("UPDATE sites SET status = ? WHERE id = ?", [
+    await tx.runAsync("UPDATE sites SET status = ? WHERE id = ?", [
       incompleteCategories?.count === 0 ? "COMPLETED" : "INCOMPLETE",
       input.siteId,
     ]);
@@ -68,6 +66,52 @@ export async function countPendingPhotos() {
   );
 
   return row?.count ?? 0;
+}
+
+type LocalPhotoRow = {
+  id: number;
+  picture_type_id: number;
+  local_uri: string;
+  latitude: number | null;
+  longitude: number | null;
+  captured_at: string;
+  sync_status: "PENDING" | "SYNCED";
+  server_photo_id: number | null;
+};
+
+function mapLocalPhoto(row: LocalPhotoRow): LocalPhoto {
+  return {
+    id: row.id,
+    pictureTypeId: row.picture_type_id,
+    localUri: row.local_uri,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    capturedAt: row.captured_at,
+    syncStatus: row.sync_status,
+    serverPhotoId: row.server_photo_id,
+  };
+}
+
+export async function getLatestPhotoForPictureType(pictureTypeId: number) {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<LocalPhotoRow>(
+    `SELECT
+       id,
+       picture_type_id,
+       local_uri,
+       latitude,
+       longitude,
+       captured_at,
+       sync_status,
+       server_photo_id
+     FROM photos
+     WHERE picture_type_id = ?
+     ORDER BY captured_at DESC, id DESC
+     LIMIT 1`,
+    [pictureTypeId],
+  );
+
+  return row ? mapLocalPhoto(row) : null;
 }
 
 type PendingUploadPhotoRow = {
@@ -123,12 +167,12 @@ export async function getPendingUploadPhotos() {
 }
 
 export async function markPhotoSynced(localPhotoId: number, serverPhotoId: number) {
-  const db = await getDatabase();
-
-  await db.runAsync(
-    `UPDATE photos
-     SET sync_status = 'SYNCED', server_photo_id = ?
-     WHERE id = ?`,
-    [serverPhotoId, localPhotoId],
+  await runSerializedWrite(async (db) =>
+    db.runAsync(
+      `UPDATE photos
+       SET sync_status = 'SYNCED', server_photo_id = ?
+       WHERE id = ?`,
+      [serverPhotoId, localPhotoId],
+    ),
   );
 }

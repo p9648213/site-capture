@@ -102,7 +102,7 @@ export function SiteDetailScreen() {
       </View>
       <View style={styles.header}>
         <Text style={styles.title}>{site.name}</Text>
-        <Text style={styles.address}>{site.address}</Text>
+        <Text style={styles.siteId}>Site ID: {site.siteId}</Text>
       </View>
       <FlatList
         data={site.categories}
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: "700",
   },
-  address: {
+  siteId: {
     marginTop: 6,
     color: "#526171",
   },

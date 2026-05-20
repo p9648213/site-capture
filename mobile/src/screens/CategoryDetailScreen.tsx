@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, type RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { getLatestPhotoForPictureType } from "../db/photos";
 import { getSiteWithCategories } from "../db/sites";
 import type { RootStackParamList } from "../navigation/types";
 import { usePhotoSyncContext } from "../sync/PhotoSyncContext";
+import type { LocalPhoto } from "../types/photo";
 import type { SiteWithCategories } from "../types/site";
 
 type Route = RouteProp<RootStackParamList, "CategoryDetail">;
@@ -17,6 +29,7 @@ export function CategoryDetailScreen() {
   const photoSync = usePhotoSyncContext();
   const [site, setSite] = useState<SiteWithCategories | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [previewPhoto, setPreviewPhoto] = useState<LocalPhoto | null>(null);
 
   const loadSite = useCallback(
     async (showLoading: boolean) => {
@@ -64,6 +77,17 @@ export function CategoryDetailScreen() {
     [route.params.categoryId, site],
   );
 
+  async function openPhotoPreview(pictureTypeId: number) {
+    const photo = await getLatestPhotoForPictureType(pictureTypeId);
+
+    if (!photo) {
+      Alert.alert("No local photo", "This picture type does not have a photo saved on this device yet.");
+      return;
+    }
+
+    setPreviewPhoto(photo);
+  }
+
   if (isLoading) {
     return (
       <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.centered}>
@@ -109,18 +133,7 @@ export function CategoryDetailScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable
-            style={styles.pictureTypeRow}
-            onPress={() =>
-              navigation.navigate("Camera", {
-                siteId: site.id,
-                categoryId: category.id,
-                pictureTypeId: item.id,
-                siteName: site.name,
-                pictureTypeName: item.name,
-              })
-            }
-          >
+          <View style={styles.pictureTypeRow}>
             <View style={item.isFulfilled ? styles.fulfilledDot : styles.missingDot} />
             <View style={styles.pictureText}>
               <Text style={styles.pictureName}>{item.name}</Text>
@@ -128,10 +141,43 @@ export function CategoryDetailScreen() {
                 {item.isFulfilled ? "Completed" : "Missing photo"}
               </Text>
             </View>
-            <Text style={styles.captureText}>Capture</Text>
-          </Pressable>
+            <View style={styles.rowActions}>
+              <Pressable
+                style={[styles.actionButton, !item.isFulfilled && styles.actionButtonDisabled]}
+                disabled={!item.isFulfilled}
+                onPress={() => openPhotoPreview(item.id)}
+              >
+                <Text style={[styles.viewText, !item.isFulfilled && styles.actionTextDisabled]}>View</Text>
+              </Pressable>
+              <Pressable
+                style={styles.actionButton}
+                onPress={() =>
+                  navigation.navigate("Camera", {
+                    siteId: site.id,
+                    categoryId: category.id,
+                    pictureTypeId: item.id,
+                    siteName: site.name,
+                    pictureTypeName: item.name,
+                  })
+                }
+              >
+                <Text style={styles.captureText}>Capture</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
       />
+      <Modal visible={previewPhoto !== null} animationType="fade" transparent onRequestClose={() => setPreviewPhoto(null)}>
+        <View style={styles.previewModal}>
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>Photo preview</Text>
+            <Pressable style={styles.previewCloseButton} onPress={() => setPreviewPhoto(null)}>
+              <Text style={styles.previewCloseText}>Close</Text>
+            </Pressable>
+          </View>
+          {previewPhoto ? <Image source={{ uri: previewPhoto.localUri }} resizeMode="contain" style={styles.previewImage} /> : null}
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -257,9 +303,62 @@ const styles = StyleSheet.create({
     color: "#92400e",
     fontWeight: "600",
   },
+  rowActions: {
+    alignItems: "flex-end",
+    gap: 8,
+  },
+  actionButton: {
+    minHeight: 36,
+    minWidth: 72,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 6,
+    backgroundColor: "#eff6ff",
+    paddingHorizontal: 10,
+  },
+  actionButtonDisabled: {
+    backgroundColor: "#eef2f7",
+  },
   captureText: {
     color: "#2563eb",
     fontWeight: "800",
+  },
+  viewText: {
+    color: "#047857",
+    fontWeight: "800",
+  },
+  actionTextDisabled: {
+    color: "#94a3b8",
+  },
+  previewModal: {
+    flex: 1,
+    backgroundColor: "#000000",
+  },
+  previewHeader: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#111827",
+    paddingHorizontal: 16,
+  },
+  previewTitle: {
+    color: "#ffffff",
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  previewCloseButton: {
+    minHeight: 40,
+    justifyContent: "center",
+  },
+  previewCloseText: {
+    color: "#93c5fd",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  previewImage: {
+    flex: 1,
+    width: "100%",
   },
   completedBadge: {
     alignSelf: "flex-start",

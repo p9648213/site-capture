@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as Network from "expo-network";
 import { countPendingPhotos } from "../db/photos";
 import { syncPendingPhotos } from "./photoSync";
@@ -23,17 +23,22 @@ export function usePhotoSync(enabled: boolean): PhotoSyncState {
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [syncRevision, setSyncRevision] = useState(0);
+  const syncPromiseRef = useRef<Promise<void> | null>(null);
 
   const refreshPendingCount = useCallback(async () => {
     setPendingCount(await countPendingPhotos());
   }, []);
 
   const syncNow = useCallback(async () => {
+    if (syncPromiseRef.current) {
+      return syncPromiseRef.current;
+    }
+
     setIsSyncing(true);
     setLastMessage(null);
     setLastError(null);
 
-    try {
+    const syncPromise = (async () => {
       const result = await syncPendingPhotos();
       setPendingCount(result.remaining);
 
@@ -46,12 +51,18 @@ export function usePhotoSync(enabled: boolean): PhotoSyncState {
           `Uploaded ${result.synced} photo${result.synced === 1 ? "" : "s"} and refreshed site data. ${result.remaining} pending.`,
         );
       }
-    } catch (error) {
-      await refreshPendingCount();
-      setLastError(error instanceof Error ? error.message : "Photo sync failed.");
-    } finally {
-      setIsSyncing(false);
-    }
+    })()
+      .catch(async (error: unknown) => {
+        await refreshPendingCount();
+        setLastError(error instanceof Error ? error.message : "Photo sync failed.");
+      })
+      .finally(() => {
+        syncPromiseRef.current = null;
+        setIsSyncing(false);
+      });
+
+    syncPromiseRef.current = syncPromise;
+    return syncPromise;
   }, [refreshPendingCount]);
 
   useEffect(() => {

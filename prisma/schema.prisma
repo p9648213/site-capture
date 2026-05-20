@@ -10,7 +10,7 @@ datasource db {
 model Site {
   id         Int        @id @default(autoincrement())
   name       String
-  address    String
+  siteId     String
   status     String     @default("INCOMPLETE")
   updatedAt  DateTime   @updatedAt
   categories Category[]
@@ -36,11 +36,13 @@ model PictureType {
   categoryId  Int
   name        String
   isFulfilled Boolean  @default(false)
+  sortOrder   Int      @default(0)
   updatedAt   DateTime @updatedAt
   category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   photos      Photo[]
 
   @@index([categoryId])
+  @@index([categoryId, sortOrder])
 }
 
 model Photo {

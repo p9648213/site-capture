@@ -19,7 +19,7 @@ export type Category = {
 export type Site = {
   id: number;
   name: string;
-  address: string;
+  siteId: string;
   status: CompletionStatus;
   lastSyncedAt: string | null;
 };
@@ -37,7 +37,7 @@ export type SyncResponse = {
   sites: Array<{
     id: number;
     name: string;
-    address: string;
+    siteId: string;
     status: CompletionStatus;
     updatedAt: string;
     categories: Array<{

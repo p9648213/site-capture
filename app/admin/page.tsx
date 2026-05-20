@@ -12,7 +12,7 @@ function serializeSites(sites: Awaited<ReturnType<typeof getSites>>) {
     (site): AdminSite => ({
       id: site.id,
       name: site.name,
-      address: site.address,
+      siteId: site.siteId,
       status: site.status as AdminStatus,
       updatedAt: site.updatedAt.toISOString(),
       categories: site.categories.map((category) => ({
@@ -26,7 +26,14 @@ function serializeSites(sites: Awaited<ReturnType<typeof getSites>>) {
           categoryId: pictureType.categoryId,
           name: pictureType.name,
           isFulfilled: pictureType.isFulfilled,
+          sortOrder: pictureType.sortOrder,
           updatedAt: pictureType.updatedAt.toISOString(),
+          latestPhoto: pictureType.photos[0]
+            ? {
+                id: pictureType.photos[0].id,
+                capturedAt: pictureType.photos[0].capturedAt.toISOString(),
+              }
+            : null,
         })),
       })),
     }),
@@ -41,7 +48,13 @@ async function getSites() {
         orderBy: { id: "asc" },
         include: {
           pictureTypes: {
-            orderBy: { id: "asc" },
+            orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
+            include: {
+              photos: {
+                orderBy: { capturedAt: "desc" },
+                take: 1,
+              },
+            },
           },
         },
       },

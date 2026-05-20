@@ -1,10 +1,28 @@
 import * as SQLite from "expo-sqlite";
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let writeQueue: Promise<void> = Promise.resolve();
 
 export function getDatabase() {
   databasePromise ??= SQLite.openDatabaseAsync("sitecapture.db");
   return databasePromise;
+}
+
+export async function runSerializedWrite<T>(task: (db: SQLite.SQLiteDatabase) => Promise<T>) {
+  const run = async () => task(await getDatabase());
+  const result = writeQueue.then(run, run);
+  writeQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return result;
+}
+
+export async function runSerializedTransaction(
+  task: Parameters<SQLite.SQLiteDatabase["withExclusiveTransactionAsync"]>[0],
+) {
+  return runSerializedWrite(async (db) => db.withExclusiveTransactionAsync(task));
 }
 
 export async function initializeDatabase() {
@@ -17,7 +35,7 @@ export async function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS sites (
       id INTEGER PRIMARY KEY NOT NULL,
       name TEXT NOT NULL,
-      address TEXT NOT NULL,
+      site_id TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('INCOMPLETE', 'COMPLETED')),
       last_synced_at TEXT
     );
@@ -57,4 +75,12 @@ export async function initializeDatabase() {
       value TEXT NOT NULL
     );
   `);
+
+  const siteColumns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(sites)");
+  const hasAddressColumn = siteColumns.some((column) => column.name === "address");
+  const hasSiteIdColumn = siteColumns.some((column) => column.name === "site_id");
+
+  if (hasAddressColumn && !hasSiteIdColumn) {
+    await db.execAsync("ALTER TABLE sites RENAME COLUMN address TO site_id;");
+  }
 }

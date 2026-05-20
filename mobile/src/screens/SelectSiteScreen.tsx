@@ -203,7 +203,7 @@ export function SelectSiteScreen() {
                   {item.status}
                 </Text>
               </View>
-              <Text style={styles.address}>{item.address}</Text>
+              <Text style={styles.siteId}>Site ID: {item.siteId}</Text>
             </Pressable>
           )}
         />
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-  address: {
+  siteId: {
     marginTop: 8,
     color: "#526171",
   },
